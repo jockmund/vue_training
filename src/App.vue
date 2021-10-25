@@ -1,7 +1,9 @@
 <template>
-  <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
+  <div
+    v-if="Object.keys(tokensName).length > 0"
+    class="container mx-auto flex flex-col items-center bg-gray-100 p-4"
+  >
     <div class="container">
-      <div class="w-full my-4"></div>
       <section>
         <div class="flex">
           <div class="max-w-xs">
@@ -27,6 +29,37 @@
                 "
                 placeholder="Например DOGE"
               />
+            </div>
+            <div
+              v-if="writeTicker"
+              class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
+            >
+              <span
+                v-for="autocompleteTicker in autocompleteTickers"
+                :key="autocompleteTicker"
+                @click="
+                  this.ticker = autocompleteTicker;
+                  this.clickAutocomplete = true;
+                  add();
+                "
+                class="
+                  inline-flex
+                  items-center
+                  px-2
+                  m-1
+                  rounded-md
+                  text-xs
+                  font-medium
+                  bg-gray-300
+                  text-gray-800
+                  cursor-pointer
+                "
+              >
+                {{ autocompleteTicker }}
+              </span>
+            </div>
+            <div v-if="inTickers" class="text-sm text-red-600">
+              Такой тикер уже добавлен
             </div>
           </div>
         </div>
@@ -80,7 +113,7 @@
             :key="t.name"
             @click="selectTicker(t)"
             :class="{
-              'border-4': sel === t,
+              'border-4': sel === t
             }"
             class="
               bg-white
@@ -146,7 +179,7 @@
             v-for="(bar, idx) in normalizeGraph()"
             :key="idx"
             :style="{
-              height: `${bar}%`,
+              height: `${bar}%`
             }"
             class="bg-purple-800 border w-10"
           ></div>
@@ -181,6 +214,46 @@
       </section>
     </div>
   </div>
+  <div
+    v-else
+    class="container mx-auto flex flex-col items-center bg-gray-100 p-4"
+  >
+    <div
+      class="
+        fixed
+        w-100
+        h-100
+        opacity-80
+        bg-purple-800
+        inset-0
+        z-50
+        flex
+        items-center
+        justify-center
+      "
+    >
+      <svg
+        class="animate-spin -ml-1 mr-3 h-12 w-12 text-white"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle
+          class="opacity-25"
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          stroke-width="4"
+        ></circle>
+        <path
+          class="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+        ></path>
+      </svg>
+    </div>
+  </div>
 </template>
 
 <script>
@@ -189,19 +262,75 @@ export default {
   data() {
     return {
       ticker: "",
-      tickers: [{ name: "DEMO1", price: "1" }],
+      tickers: [],
+      tickersInterval: [],
       sel: null,
       graph: [],
+      tokensName: [],
+      writeTicker: false,
+      autocompleteTickers: [],
+      clickAutocomplete: false
     };
   },
+  async created() {
+    const names = await fetch(
+      `https://min-api.cryptocompare.com/data/all/coinlist?summary=true&api_key=ce9f350185f9a01ccef413fcd5b7efad7f634f35b60ccb0e8057944fa3330bd8`
+    );
+    const data = await names.json();
+    this.tokensName = data["Data"];
+
+    const tickersData = localStorage.getItem("cryptonomicon-list");
+
+    if (tickersData) {
+      this.tickers = JSON.parse(tickersData);
+      this.tickers.forEach((t) => {
+        const intervalId = this.subscribeToUpdates(t);
+        const interval = {
+          name: t.name,
+          id: intervalId
+        };
+        
+        this.tickersInterval.push(interval)
+      });
+    }
+  },
+  computed: {
+    inTickers: function () {
+      const value = !!this.tickers.find(
+        (t) => t.name.toLowerCase() === this.ticker.toLowerCase()
+      );
+      if (!this.clickAutocomplete) {
+        return;
+      }
+      // eslint-disable-next-line vue/no-side-effects-in-computed-properties
+      this.clickAutocomplete = false;
+      return value;
+    }
+  },
+  watch: {
+    ticker: function (selectedTokenName) {
+      this.autocompleteTickers = [];
+      this.writeTicker = !!selectedTokenName;
+      for (const tokenKey in this.tokensName) {
+        if (this.autocompleteTickers.length === 4) {
+          break;
+        }
+        if (
+          this.tokensName[tokenKey].FullName.toLowerCase().includes(
+            selectedTokenName.toLowerCase()
+          ) ||
+          this.tokensName[tokenKey].Symbol.toLowerCase().includes(
+            selectedTokenName.toLowerCase()
+          )
+        ) {
+          this.autocompleteTickers.push(this.tokensName[tokenKey].Symbol);
+        }
+      }
+    }
+  },
   methods: {
-    add() {
-      const currentTicker = {
-        name: this.ticker,
-        price: "-",
-      };
-      this.tickers.push(currentTicker);
-      setInterval(async () => {
+    subscribeToUpdates(currentTicker) {
+      const intervalId = setInterval(async () => {
         const f = await fetch(
           `https://min-api.cryptocompare.com/data/price?fsym=${currentTicker.name}&tsyms=USD&api_key=ce9f350185f9a01ccef413fcd5b7efad7f634f35b60ccb0e8057944fa3330bd8`
         );
@@ -213,10 +342,41 @@ export default {
           this.graph.push(data.USD);
         }
       }, 3000);
+
+      return intervalId;
+    },
+
+    add() {
+      if (this.inTickers) {
+        return;
+      }
+
+      const currentTicker = {
+        name: this.ticker.toUpperCase(),
+        price: "-"
+      };
+
+      this.tickers.push(currentTicker);
+
+      localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
+
+      const intervalId = this.subscribeToUpdates(currentTicker);
+      const interval = {
+        name: this.ticker.toUpperCase(),
+        id: intervalId
+      };
+      this.tickersInterval.push(interval);
       this.ticker = "";
     },
     handleDel(tickerToRemove) {
       this.tickers = this.tickers.filter((t) => t !== tickerToRemove);
+      const interval = this.tickersInterval.find(
+        (t) => t.name === tickerToRemove.name
+      );
+      clearInterval(interval.id);
+      this.tickersInterval = this.tickersInterval.filter(
+        (t) => t.name !== interval.name
+      );
       if (this.sel === tickerToRemove) {
         this.sel = null;
       }
@@ -231,7 +391,11 @@ export default {
     selectTicker(currentTicker) {
       this.sel = currentTicker;
       this.graph = [];
-    },
-  },
+    }
+  }
 };
 </script>
+
+<style>
+@import "./loader.css";
+</style>
