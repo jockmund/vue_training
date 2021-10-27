@@ -37,11 +37,7 @@
               <span
                 v-for="autocompleteTicker in autocompleteTickers"
                 :key="autocompleteTicker"
-                @click="
-                  this.ticker = autocompleteTicker;
-                  this.clickAutocomplete = true;
-                  add();
-                "
+                @click="addFromAutocomplete(autocompleteTicker)"
                 class="
                   inline-flex
                   items-center
@@ -58,7 +54,7 @@
                 {{ autocompleteTicker }}
               </span>
             </div>
-            <div v-if="inTickers" class="text-sm text-red-600">
+            <div v-if="InTickers" class="text-sm text-red-600">
               Такой тикер уже добавлен
             </div>
           </div>
@@ -107,13 +103,75 @@
       </section>
       <template v-if="tickers.length > 0">
         <hr class="w-full border-t border-gray-600 my-4" />
+        <div>
+          <button
+            @click="page = page - 1"
+            v-if="page > 1"
+            class="
+              mx-2
+              my-4
+              inline-flex
+              items-center
+              py-2
+              px-4
+              border border-transparent
+              shadow-sm
+              text-sm
+              leading-4
+              font-medium
+              rounded-full
+              text-white
+              bg-gray-600
+              hover:bg-gray-700
+              transition-colors
+              duration-300
+              focus:outline-none
+              focus:ring-2
+              focus:ring-offset-2
+              focus:ring-gray-500
+            "
+          >
+            Назад
+          </button>
+          <button
+            @click="page = page + 1"
+            v-if="hasNextPage"
+            class="
+              mx-2
+              my-4
+              inline-flex
+              items-center
+              py-2
+              px-4
+              border border-transparent
+              shadow-sm
+              text-sm
+              leading-4
+              font-medium
+              rounded-full
+              text-white
+              bg-gray-600
+              hover:bg-gray-700
+              transition-colors
+              duration-300
+              focus:outline-none
+              focus:ring-2
+              focus:ring-offset-2
+              focus:ring-gray-500
+            "
+          >
+            Вперед
+          </button>
+          <div>Фильтр: <input v-model="filter" /></div>
+        </div>
+        <hr class="w-full border-t border-gray-600 my-4" />
         <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <div
-            v-for="t in tickers"
+            v-for="t in paginatedTickers"
             :key="t.name"
             @click="selectTicker(t)"
             :class="{
-              'border-4': sel === t
+              'border-4': selectedTicker === t
             }"
             class="
               bg-white
@@ -170,13 +228,13 @@
         </dl>
         <hr class="w-full border-t border-gray-600 my-4" />
       </template>
-      <section v-if="sel" class="relative">
+      <section v-if="selectedTicker" class="relative">
         <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
-          {{ sel.name }} - USD
+          {{ selectedTicker.name }} - USD
         </h3>
         <div class="flex items-end border-gray-600 border-b border-l h-64">
           <div
-            v-for="(bar, idx) in normalizeGraph()"
+            v-for="(bar, idx) in normalizedGraph"
             :key="idx"
             :style="{
               height: `${bar}%`
@@ -185,7 +243,7 @@
           ></div>
         </div>
         <button
-          @click="sel = null"
+          @click="selectedTicker = null"
           type="button"
           class="absolute top-0 right-0"
         >
@@ -264,11 +322,13 @@ export default {
       ticker: "",
       tickers: [],
       tickersInterval: [],
-      sel: null,
+      selectedTicker: null,
       graph: [],
       tokensName: [],
       writeTicker: false,
       autocompleteTickers: [],
+      page: 1,
+      filter: "",
       clickAutocomplete: false
     };
   },
@@ -279,42 +339,48 @@ export default {
     const data = await names.json();
     this.tokensName = data["Data"];
 
+    const windowData = Object.fromEntries(
+      new URL(window.location).searchParams.entries()
+    );
+
+    this.filter = windowData["filter"] || this.filter;
+    this.page = +windowData["page"] || this.page;
+
     const tickersData = localStorage.getItem("cryptonomicon-list");
 
     if (tickersData) {
       this.tickers = JSON.parse(tickersData);
       this.tickers.forEach((t) => {
-        const intervalId = this.subscribeToUpdates(t);
-        const interval = {
-          name: t.name,
-          id: intervalId
-        };
-        
-        this.tickersInterval.push(interval)
+        this.subscribeToUpdates(t);
       });
     }
   },
-  computed: {
-    inTickers: function () {
-      const value = !!this.tickers.find(
-        (t) => t.name.toLowerCase() === this.ticker.toLowerCase()
-      );
-      if (!this.clickAutocomplete) {
-        return;
-      }
-      // eslint-disable-next-line vue/no-side-effects-in-computed-properties
-      this.clickAutocomplete = false;
-      return value;
-    }
-  },
   watch: {
+    selectedTicker() {
+      this.graph = [];
+    },
+
+    tickers() {
+      localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
+    },
+
+    paginatedTickers() {
+      if (this.paginatedTickers.length === 0 && this.page > 1) {
+        this.page -= 1;
+      }
+    },
+
     ticker: function (selectedTokenName) {
+      this.clickAutocomplete = false;
+
       this.autocompleteTickers = [];
       this.writeTicker = !!selectedTokenName;
+
       for (const tokenKey in this.tokensName) {
         if (this.autocompleteTickers.length === 4) {
           break;
         }
+
         if (
           this.tokensName[tokenKey].FullName.toLowerCase().includes(
             selectedTokenName.toLowerCase()
@@ -326,24 +392,97 @@ export default {
           this.autocompleteTickers.push(this.tokensName[tokenKey].Symbol);
         }
       }
+    },
+
+    filter: function () {
+      this.page = 1;
+    },
+
+    pageStateOptions: function (value) {
+      window.history.pushState(
+        null,
+        document.title,
+        `${window.location.pathname}?filter=${value.filter}&page=${value.page}`
+      );
+    }
+  },
+  computed: {
+    filteredTickers() {
+      return this.tickers.filter((ticker) =>
+        ticker.name.includes(this.filter.toUpperCase())
+      );
+    },
+
+    paginatedTickers() {
+      return this.filteredTickers.slice(this.startIndex, this.endIndex);
+    },
+
+    hasNextPage() {
+      return this.filteredTickers.length > this.endIndex;
+    },
+
+    startIndex() {
+      return (this.page - 1) * 6;
+    },
+
+    endIndex() {
+      return this.page * 6;
+    },
+
+    inTickers() {
+      return !!this.tickers.find(
+        (t) => t.name.toLowerCase() === this.ticker.toLowerCase()
+      );
+    },
+
+    normalizedGraph() {
+      const maxValue = Math.max(...this.graph);
+      const minValue = Math.min(...this.graph);
+
+      if (maxValue === minValue) {
+        return this.graph.map(() => 50);
+      }
+
+      return this.graph.map(
+        (price) => 5 + ((price - minValue) * 95) / (maxValue - minValue)
+      );
+    },
+
+    pageStateOptions() {
+      return {
+        filter: this.filter,
+        page: this.page
+      };
     }
   },
   methods: {
+    addFromAutocomplete(autocompleteTicker) {
+      this.clickAutocomplete = true;
+      this.ticker = autocompleteTicker;
+      this.add();
+    },
+
     subscribeToUpdates(currentTicker) {
       const intervalId = setInterval(async () => {
         const f = await fetch(
           `https://min-api.cryptocompare.com/data/price?fsym=${currentTicker.name}&tsyms=USD&api_key=ce9f350185f9a01ccef413fcd5b7efad7f634f35b60ccb0e8057944fa3330bd8`
         );
-        const data = await f.json();
-        this.tickers.find((t) => t.name === currentTicker.name).price =
-          data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
 
-        if (this.sel?.name === currentTicker.name) {
-          this.graph.push(data.USD);
+        const data = await f.json();
+
+        this.tickers.find((t) => t.name === currentTicker.name).price =
+          data["USD"] > 1 ? data["USD"].toFixed(2) : data["USD"].toPrecision(2);
+
+        if (this.selectedTicker?.name === currentTicker.name) {
+          this.graph.push(data["USD"]);
         }
       }, 3000);
+      const interval = {
+        name: currentTicker.name,
+        id: intervalId
+      };
 
-      return intervalId;
+      this.tickersInterval.push(interval);
     },
 
     add() {
@@ -356,41 +495,33 @@ export default {
         price: "-"
       };
 
-      this.tickers.push(currentTicker);
+      this.tickers = [...this.tickers, currentTicker];
 
-      localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
+      this.subscribeToUpdates(currentTicker);
 
-      const intervalId = this.subscribeToUpdates(currentTicker);
-      const interval = {
-        name: this.ticker.toUpperCase(),
-        id: intervalId
-      };
-      this.tickersInterval.push(interval);
       this.ticker = "";
+      this.filter = "";
     },
     handleDel(tickerToRemove) {
       this.tickers = this.tickers.filter((t) => t !== tickerToRemove);
+
       const interval = this.tickersInterval.find(
         (t) => t.name === tickerToRemove.name
       );
+
       clearInterval(interval.id);
+
       this.tickersInterval = this.tickersInterval.filter(
         (t) => t.name !== interval.name
       );
-      if (this.sel === tickerToRemove) {
-        this.sel = null;
+
+      if (this.selectedTicker === tickerToRemove) {
+        this.selectedTicker = null;
       }
     },
-    normalizeGraph() {
-      const maxValue = Math.max(...this.graph);
-      const minValue = Math.min(...this.graph);
-      return this.graph.map(
-        (price) => 5 + ((price - minValue) * 95) / (maxValue - minValue)
-      );
-    },
+
     selectTicker(currentTicker) {
-      this.sel = currentTicker;
-      this.graph = [];
+      this.selectedTicker = currentTicker;
     }
   }
 };
