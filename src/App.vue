@@ -35,9 +35,9 @@
               class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
             >
               <span
-                v-for="autocompleteTicker in autocompleteTickers"
-                :key="autocompleteTicker"
-                @click="addFromAutocomplete(autocompleteTicker)"
+                v-for="autocompleteTickerName in autocompleteTickers"
+                :key="autocompleteTickerName"
+                @click="addFromAutocomplete(autocompleteTickerName)"
                 class="
                   inline-flex
                   items-center
@@ -51,10 +51,10 @@
                   cursor-pointer
                 "
               >
-                {{ autocompleteTicker }}
+                {{ autocompleteTickerName }}
               </span>
             </div>
-            <div v-if="InTickers" class="text-sm text-red-600">
+            <div v-if="inTickers" class="text-sm text-red-600">
               Такой тикер уже добавлен
             </div>
           </div>
@@ -187,7 +187,7 @@
                 {{ t.name }} - USD
               </dt>
               <dd class="mt-1 text-3xl font-semibold text-gray-900">
-                {{ t.price }}
+                {{ formatPrice(t.price) }}
               </dd>
             </div>
             <div class="w-full border-t border-gray-200"></div>
@@ -315,13 +315,14 @@
 </template>
 
 <script>
+import { subscribeToTicker, unsubscribeFromTicker } from "./api";
+
 export default {
   name: "App",
   data() {
     return {
       ticker: "",
       tickers: [],
-      tickersInterval: [],
       selectedTicker: null,
       graph: [],
       tokensName: [],
@@ -332,9 +333,10 @@ export default {
       clickAutocomplete: false
     };
   },
+
   async created() {
     const names = await fetch(
-      `https://min-api.cryptocompare.com/data/all/coinlist?summary=true&api_key=ce9f350185f9a01ccef413fcd5b7efad7f634f35b60ccb0e8057944fa3330bd8`
+      `https://min-api.cryptocompare.com/data/all/coinlist?summary=true`
     );
     const data = await names.json();
     this.tokensName = data["Data"];
@@ -350,10 +352,14 @@ export default {
 
     if (tickersData) {
       this.tickers = JSON.parse(tickersData);
-      this.tickers.forEach((t) => {
-        this.subscribeToUpdates(t);
+      this.tickers.forEach((ticker) => {
+        subscribeToTicker(ticker.name, (newPrice) => {
+          this.updateTicker(ticker.name, newPrice);
+        });
       });
     }
+
+    setInterval(this.updateTickers, 5000);
   },
   watch: {
     selectedTicker() {
@@ -371,7 +377,9 @@ export default {
     },
 
     ticker: function (selectedTokenName) {
-      this.clickAutocomplete = false;
+      if (!this.clickAutocomplete) {
+        this.clickAutocomplete = false;
+      }
 
       this.autocompleteTickers = [];
       this.writeTicker = !!selectedTokenName;
@@ -429,7 +437,7 @@ export default {
       return this.page * 6;
     },
 
-    inTickers() {
+    inTickers: function () {
       return !!this.tickers.find(
         (t) => t.name.toLowerCase() === this.ticker.toLowerCase()
       );
@@ -456,37 +464,46 @@ export default {
     }
   },
   methods: {
+    updateTicker(tickerName, price) {
+      console.log("asd");
+      this.tickers
+        .filter((t) => t.name === tickerName)
+        .forEach((t) => {
+          t.price = price;
+        });
+    },
+
+    formatPrice(price) {
+      if (typeof price === "string") {
+        return price;
+      }
+      return price > 1 ? price.toFixed(2) : price.toPrecision(2);
+    },
+
     addFromAutocomplete(autocompleteTicker) {
       this.clickAutocomplete = true;
       this.ticker = autocompleteTicker;
       this.add();
     },
 
-    subscribeToUpdates(currentTicker) {
-      const intervalId = setInterval(async () => {
-        const f = await fetch(
-          `https://min-api.cryptocompare.com/data/price?fsym=${currentTicker.name}&tsyms=USD&api_key=ce9f350185f9a01ccef413fcd5b7efad7f634f35b60ccb0e8057944fa3330bd8`
-        );
-
-        const data = await f.json();
-
-        this.tickers.find((t) => t.name === currentTicker.name).price =
-          data["USD"] > 1 ? data["USD"].toFixed(2) : data["USD"].toPrecision(2);
-
-        if (this.selectedTicker?.name === currentTicker.name) {
-          this.graph.push(data["USD"]);
-        }
-      }, 3000);
-      const interval = {
-        name: currentTicker.name,
-        id: intervalId
-      };
-
-      this.tickersInterval.push(interval);
+    async updateTickers() {
+      // if (!this.tickers.length) {
+      //   return;
+      // }
+      // const exchangeData = await loadTickers(this.tickers.map((t) => t.name));
+      // this.tickers.forEach((ticker) => {
+      //   const price = exchangeData[ticker.name.toUpperCase()];
+      //
+      //   ticker.price = price ?? "-";
+      // });
     },
 
     add() {
+      if (this.ticker === "") {
+        return;
+      }
       if (this.inTickers) {
+        console.log("1");
         return;
       }
 
@@ -495,25 +512,22 @@ export default {
         price: "-"
       };
 
+      subscribeToTicker(currentTicker.name, (newPrice) => {
+        this.updateTicker(currentTicker.name, newPrice);
+      });
+
       this.tickers = [...this.tickers, currentTicker];
 
-      this.subscribeToUpdates(currentTicker);
+      console.log("2");
 
       this.ticker = "";
       this.filter = "";
     },
+
     handleDel(tickerToRemove) {
       this.tickers = this.tickers.filter((t) => t !== tickerToRemove);
 
-      const interval = this.tickersInterval.find(
-        (t) => t.name === tickerToRemove.name
-      );
-
-      clearInterval(interval.id);
-
-      this.tickersInterval = this.tickersInterval.filter(
-        (t) => t.name !== interval.name
-      );
+      unsubscribeFromTicker(tickerToRemove.name);
 
       if (this.selectedTicker === tickerToRemove) {
         this.selectedTicker = null;
@@ -527,6 +541,4 @@ export default {
 };
 </script>
 
-<style>
-@import "./loader.css";
-</style>
+<style></style>
