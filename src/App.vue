@@ -358,8 +358,6 @@ export default {
         });
       });
     }
-
-    setInterval(this.updateTickers, 5000);
   },
   watch: {
     selectedTicker() {
@@ -465,16 +463,18 @@ export default {
   },
   methods: {
     updateTicker(tickerName, price) {
-      console.log("asd");
       this.tickers
         .filter((t) => t.name === tickerName)
         .forEach((t) => {
+          if (t === this.selectedTicker) {
+            this.graph.push(price);
+          }
           t.price = price;
         });
     },
 
     formatPrice(price) {
-      if (typeof price === "string") {
+      if (price === "-") {
         return price;
       }
       return price > 1 ? price.toFixed(2) : price.toPrecision(2);
@@ -486,24 +486,11 @@ export default {
       this.add();
     },
 
-    async updateTickers() {
-      // if (!this.tickers.length) {
-      //   return;
-      // }
-      // const exchangeData = await loadTickers(this.tickers.map((t) => t.name));
-      // this.tickers.forEach((ticker) => {
-      //   const price = exchangeData[ticker.name.toUpperCase()];
-      //
-      //   ticker.price = price ?? "-";
-      // });
-    },
-
     add() {
       if (this.ticker === "") {
         return;
       }
       if (this.inTickers) {
-        console.log("1");
         return;
       }
 
@@ -517,8 +504,6 @@ export default {
       });
 
       this.tickers = [...this.tickers, currentTicker];
-
-      console.log("2");
 
       this.ticker = "";
       this.filter = "";
