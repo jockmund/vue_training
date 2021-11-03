@@ -1,5 +1,5 @@
 const API_KEY =
-  "8ee0f4aff0301a14ad75f1bae50a18a1a87db102e3edeb45cc25600446bce815";
+  "d666fd15978b6c2e7db58b39dbb23d5087dcf9b1e44a5cff7ceb170768026153";
 
 const tickersHandlers = new Map();
 const socket = new WebSocket(
@@ -8,12 +8,57 @@ const socket = new WebSocket(
 
 const AGGREGATE_INDEX = "5";
 
+let convertValue;
+
 socket.addEventListener("message", (e) => {
   const {
     TYPE: type,
     FROMSYMBOL: currency,
-    PRICE: newPrice
+    PRICE: newPrice,
+    PARAMETER: parameter,
+    MESSAGE: message,
+    TOSYMBOL: toTicker
   } = JSON.parse(e.data);
+
+  const newTickerData = {
+    newPrice: newPrice,
+    newValid: true
+  };
+
+  if (currency === "BTC") {
+    convertValue = newPrice;
+  }
+
+  if (type === "500" && message === "INVALID_SUB") {
+    const tickerName = parameter.split("~")[2];
+    const subsTicker = parameter.split("~")[3];
+
+    if (subsTicker !== "BTC") {
+      if (!tickersHandlers.get("BTC")) {
+        sendToWebSocket({
+          action: "SubAdd",
+          subs: [`5~CCCAGG~BTC~USD`]
+        });
+        tickersHandlers.set("BTC", []);
+      }
+      sendToWebSocket({
+        action: "SubAdd",
+        subs: [`5~CCCAGG~${tickerName}~BTC`]
+      });
+
+      return;
+    }
+
+    newTickerData.newValid = false;
+    newTickerData.newPrice = "-";
+
+    const handlers = tickersHandlers.get(tickerName) ?? [];
+    handlers.forEach((fn) => fn(newTickerData));
+
+    tickersHandlers.delete(tickerName);
+    return;
+  }
+
   if (type !== AGGREGATE_INDEX) {
     return;
   }
@@ -22,8 +67,13 @@ socket.addEventListener("message", (e) => {
     return;
   }
 
+  if (toTicker === "BTC") {
+    const convertedPrice = newPrice * convertValue;
+    newTickerData.newPrice = convertedPrice;
+  }
+
   const handlers = tickersHandlers.get(currency) ?? [];
-  handlers.forEach((fn) => fn(newPrice));
+  handlers.forEach((fn) => fn(newTickerData));
 });
 
 function sendToWebSocket(message) {
@@ -55,15 +105,28 @@ function unsubscribeFromTickerOnWs(ticker) {
     action: "SubRemove",
     subs: [`5~CCCAGG~${ticker}~USD`]
   });
+  sendToWebSocket({
+    action: "SubRemove",
+    subs: [`5~CCCAGG~${ticker}~BTC`]
+  });
 }
 
 export const subscribeToTicker = (ticker, cb) => {
+  if (!tickersHandlers.get(ticker)) {
+    subscribeToTickerOnWs(ticker);
+  }
+
   const subscribers = tickersHandlers.get(ticker) || [];
   tickersHandlers.set(ticker, [...subscribers, cb]);
-  subscribeToTickerOnWs(ticker);
 };
 
 export const unsubscribeFromTicker = (ticker) => {
   tickersHandlers.delete(ticker);
   unsubscribeFromTickerOnWs(ticker);
+};
+
+export const fetchTickersName = async () => {
+  return await fetch(
+    `https://min-api.cryptocompare.com/data/all/coinlist?summary=true`
+  );
 };
